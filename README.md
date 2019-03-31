@@ -20,6 +20,6 @@ https://arxiv.org/abs/1903.07291
 This StyleGAN is missing two components: dimension growth and mixing regularization. Feel free to contribute these, if you'd like!
 
 
-To train this on your own dataset, adjust lines 18 to 23 respectively, and load your own images into the /data/ folder under the naming convention 'im (n).suffix'.
+To train this on your own dataset, adjust lines 10 to 15 respectively, and load your own images into the /data/ folder under the naming convention 'im (n).suffix'.
 
 Enjoy!
