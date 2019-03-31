@@ -1,7 +1,5 @@
-from keras.layers import Layer, InputSpec
-from keras import initializers, regularizers, constraints
+from keras.layers import Layer
 from keras import backend as K
-import tensorflow as tf
 
 #Input b and g should be 1x1xC
 class AdaInstanceNormalization(Layer):

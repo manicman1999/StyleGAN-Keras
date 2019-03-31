@@ -14,16 +14,19 @@ import time
 from functools import partial
 from random import random
 
-im_size = 256
+#Config Stuff
+im_size = 32
 latent_size = 512
-BATCH_SIZE = 4
-directory = "Earth-256"
-n_images = 3405
-suff = 'jpg'
+BATCH_SIZE = 8
+directory = "Motorbikes"
+n_images = 961
+suff = 'png'
 
+#Style Z
 def noise(n):
     return np.random.normal(0.0, 1.0, size = [n, latent_size])
 
+#Noise Sample
 def noiseImage(n):
     return np.random.uniform(0.0, 1.0, size = [n, im_size, im_size, 1])
 
@@ -58,6 +61,8 @@ def import_images(loc, flip = True, suffix = 'png'):
             
     return np.array(out)
 
+#This is the REAL data generator, which can take images from disk and temporarily use them in your program.
+#Probably could/should get optimized at some point
 class dataGenerator(object):
     
     def __init__(self, loc, n, flip = True, suffix = 'png'):
@@ -85,17 +90,17 @@ class dataGenerator(object):
         
 
 
-    
-from keras.layers import Conv2D, Dense, AveragePooling2D, Conv2DTranspose, BatchNormalization, LeakyReLU, Activation
+#Imports for layers and models
+from keras.layers import Conv2D, Dense, AveragePooling2D, LeakyReLU, Activation
 from keras.layers import Reshape, UpSampling2D, Dropout, Flatten, Input, add, Cropping2D
-from keras.models import model_from_json, Sequential, Model
+from keras.models import model_from_json, Model
 from keras.optimizers import Adam
 import keras.backend as K
 
 from AdaIN import AdaInstanceNormalization
 
 
-
+#r1/r2 gradient penalty
 def gradient_penalty_loss(y_true, y_pred, averaged_samples, weight):
     gradients = K.gradients(y_pred, averaged_samples)[0]
     gradients_sqr = K.square(gradients)
@@ -106,6 +111,7 @@ def gradient_penalty_loss(y_true, y_pred, averaged_samples, weight):
     # Penalize the gradient norm
     return K.mean(gradient_penalty * weight)
 
+#Upsample, Convolution, AdaIN, Noise, Activation, Convolution, AdaIN, Noise, Activation
 def g_block(inp, style, noise, fil, u = True):
     
     b = Dense(fil)(style)
@@ -139,6 +145,7 @@ def g_block(inp, style, noise, fil, u = True):
     
     return out
 
+#Convolution, Activation, Pooling, Convolution, Activation
 def d_block(inp, fil, p = True):
     
     route2 = Conv2D(filters = fil, kernel_size = 3, padding = 'same', kernel_initializer = 'he_normal')(inp)
@@ -149,7 +156,8 @@ def d_block(inp, fil, p = True):
     out = LeakyReLU(0.01)(route2)
     
     return out
-    
+
+#This object holds the models
 class GAN(object):
     
     def __init__(self, lr = 0.0001):
@@ -214,12 +222,14 @@ class GAN(object):
         if self.G:
             return self.G
         
+        #Style FC, I only used 2 fully connected layers instead of 8 for faster training
         inp_s = Input(shape = [latent_size])
         sty = Dense(512, kernel_initializer = 'he_normal')(inp_s)
         sty = LeakyReLU(0.1)(sty)
         sty = Dense(512, kernel_initializer = 'he_normal')(sty)
         sty = LeakyReLU(0.1)(sty)
-
+        
+        #Get the noise image and crop for each size
         inp_n = Input(shape = [im_size, im_size, 1])
         noi = [Activation('linear')(inp_n)]
         curr_size = im_size
@@ -227,6 +237,7 @@ class GAN(object):
             curr_size = int(curr_size / 2)
             noi.append(Cropping2D(int(curr_size/2))(noi[-1]))
         
+        #Here do the actual generation stuff
         inp = Input(shape = [1])
         x = Dense(4 * 4 * 512, kernel_initializer = 'he_normal')(inp)
         x = Reshape([4, 4, 512])(x)
@@ -265,7 +276,7 @@ class GAN(object):
         for layer in self.G.layers:
             layer.trainable = True
         
-        #This model is simple sequential
+        #This model is simple sequential one with inputs and outputs
         gi = Input(shape = [latent_size])
         gi2 = Input(shape = [im_size, im_size, 1])
         gi3 = Input(shape = [1])
@@ -323,7 +334,6 @@ class GAN(object):
         
         
 
-
 class WGAN(object):
     
     def __init__(self, steps = -1, lr = 0.0001, silent = True):
@@ -350,8 +360,8 @@ class WGAN(object):
         self.zeros = np.zeros((BATCH_SIZE, 1), dtype=np.float32)
         self.nones = -self.ones
         
-        self.enoise = noise(32)
-        self.enoiseImage = noiseImage(32)
+        self.enoise = noise(8)
+        self.enoiseImage = noiseImage(8)
     
     def train(self):
         
@@ -394,18 +404,18 @@ class WGAN(object):
         
         return g_loss
     
-    def evaluate(self, num = 0, trunc = 2.0):
+    def evaluate(self, num = 0, trunc = 2.0): #8x4 images, bottom row is constant
         
         n = noise(32)
         n2 = noiseImage(32)
         
         im2 = self.generator.predict([n, n2, np.ones([32, 1])])
-        im3 = self.generator.predict([self.enoise, self.enoiseImage, np.ones([32, 1])])
+        im3 = self.generator.predict([self.enoise, self.enoiseImage, np.ones([8, 1])])
         
         r12 = np.concatenate(im2[:8], axis = 1)
         r22 = np.concatenate(im2[8:16], axis = 1)
         r32 = np.concatenate(im2[16:24], axis = 1)
-        r43 = np.concatenate(im3[24:32], axis = 1)
+        r43 = np.concatenate(im3[:8], axis = 1)
         
         c1 = np.concatenate([r12, r22, r32, r43], axis = 0)
         
@@ -413,20 +423,20 @@ class WGAN(object):
         
         x.save("Results/i"+str(num)+".jpg")
     
-    def saveModel(self, model, name, num):
+    def saveModel(self, model, name, num): #Save a Model
         json = model.to_json()
         with open("Models/"+name+".json", "w") as json_file:
             json_file.write(json)
             
         model.save_weights("Models/"+name+"_"+str(num)+".h5")
         
-    def loadModel(self, name, num):
+    def loadModel(self, name, num): #Load a Model
         
         file = open("Models/"+name+".json", 'r')
         json = file.read()
         file.close()
         
-        mod = model_from_json(json)
+        mod = model_from_json(json, custom_objects = {'AdaInstanceNormalization': AdaInstanceNormalization})
         mod.load_weights("Models/"+name+"_"+str(num)+".h5")
         
         return mod
@@ -451,17 +461,6 @@ class WGAN(object):
         self.generator = self.GAN.generator()
         self.DisModel = self.GAN.DisModel()
         self.AdModel = self.GAN.AdModel()
-    
-        
-    def sample(self, n):
-        
-        return self.generator.predict(noise(n))
-    
-    def instance_noise(self):
-        
-        self.AmagesA = np.array(self.AmagesA)
-        
-        self.ImagesA = self.AmagesA + np.random.uniform(-self.noise_level, self.noise_level, size = self.AmagesA.shape)
         
         
         
