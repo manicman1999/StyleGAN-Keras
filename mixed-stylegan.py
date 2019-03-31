@@ -507,7 +507,7 @@ class WGAN(object):
         n2 = noiseImage(32)
         
         im2 = self.generator.predict(([n] * self.GAN.style_layers) + [n2, np.ones([32, 1])])
-        im3 = self.generator.predict([self.enoise, self.enoiseImage, np.ones([8, 1])])
+        im3 = self.generator.predict(([self.enoise] * self.GAN.style_layers) + [self.enoiseImage, np.ones([8, 1])])
         
         r12 = np.concatenate(im2[:8], axis = 1)
         r22 = np.concatenate(im2[8:16], axis = 1)
