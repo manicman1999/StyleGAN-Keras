@@ -1,11 +1,3 @@
-# -*- coding: utf-8 -*-
-"""
-Created on Fri Jul 13 13:57:15 2018
-
-@author: mtm916
-"""
-
-
 #import numpy as np
 from PIL import Image
 from math import floor
