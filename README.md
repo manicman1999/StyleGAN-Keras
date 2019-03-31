@@ -1,5 +1,5 @@
 # StyleGAN-Keras
-StyleGAN made with Keras (without growth or mixing regularization)
+StyleGAN made with Keras (without growth)
 
 ![alt text](https://i.imgur.com/6vnPOaG.jpg)
 A set of 256x256 samples trained for 325,000 steps with a batch size of 4.
@@ -17,7 +17,9 @@ https://arxiv.org/abs/1903.07291
 "Semantic Image Synthesis with Spatially-Adaptive Normalization"
 
 
-This StyleGAN is missing two components: dimension growth and mixing regularization. Feel free to contribute these, if you'd like!
+This StyleGAN is missing growth. Feel free to contribute this, if you'd like!
+
+Mixing regularities is left out in stylegan.py, but included in mixing-stylegan.py. It complicates the inputs of the generator.
 
 
 To train this on your own dataset, adjust lines 10 to 15 respectively, and load your own images into the /data/ folder under the naming convention 'im (n).suffix'.
