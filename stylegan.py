@@ -1,3 +1,4 @@
+
 #import numpy as np
 from PIL import Image
 from math import floor
@@ -7,12 +8,12 @@ from functools import partial
 from random import random
 
 #Config Stuff
-im_size = 32
+im_size = 256
 latent_size = 512
-BATCH_SIZE = 8
-directory = "Motorbikes"
-n_images = 961
-suff = 'png'
+BATCH_SIZE = 4
+directory = "Flowers"
+n_images = 8189
+suff = 'jpg'
 
 #Style Z
 def noise(n):
@@ -52,6 +53,9 @@ def import_images(loc, flip = True, suffix = 'png'):
     print(str(i-1) + " images imported.")
             
     return np.array(out)
+
+def normalize(arr):
+    return (arr - np.mean(arr)) / (np.std(arr) + 1e-7)
 
 #This is the REAL data generator, which can take images from disk and temporarily use them in your program.
 #Probably could/should get optimized at some point
@@ -344,6 +348,8 @@ class WGAN(object):
         
         #self.ImagesA = import_images(directory, True)
         self.im = dataGenerator(directory, n_images, suffix = suff, flip = True)
+        #(self.im, _), (_, _) = cifar10.load_data()
+        #self.im = np.float32(self.im) / 255
         
         self.silent = silent
 
@@ -414,6 +420,43 @@ class WGAN(object):
         x = Image.fromarray(np.uint8(c1*255))
         
         x.save("Results/i"+str(num)+".jpg")
+        
+    def evaluate2(self, s1, s2, n1, n2, num = 0, weight = 0.5):
+        
+        s = normalize((s2 * weight) + (s1 * (1 - weight)))
+        n = (n2 * weight) + (n1 * (1 - weight))
+        
+        im2 = self.generator.predict([s, n, np.ones([32, 1])])
+        
+        r12 = np.concatenate(im2[:8], axis = 1)
+        r22 = np.concatenate(im2[8:16], axis = 1)
+        r32 = np.concatenate(im2[16:24], axis = 1)
+        r43 = np.concatenate(im2[24:], axis = 1)
+        
+        c1 = np.concatenate([r12, r22, r32, r43], axis = 0)
+        
+        x = Image.fromarray(np.uint8(c1*255))
+        
+        x.save("Results/i"+str(num)+".jpg")
+        
+    def evalTrunc(self, num = 0, trunc = 1.8):
+        
+        n = np.clip(noise(16), -trunc, trunc)
+        n2 = noiseImage(16)
+        
+        im2 = self.generator.predict([n, n2, np.ones([16, 1])])
+        
+        r12 = np.concatenate(im2[:4], axis = 1)
+        r22 = np.concatenate(im2[4:8], axis = 1)
+        r32 = np.concatenate(im2[8:12], axis = 1)
+        r43 = np.concatenate(im2[12:], axis = 1)
+        
+        c1 = np.concatenate([r12, r22, r32, r43], axis = 0)
+        
+        x = Image.fromarray(np.uint8(c1*255))
+        
+        x.save("Results/t"+str(num)+".jpg")
+        
     
     def saveModel(self, model, name, num): #Save a Model
         json = model.to_json()
@@ -459,8 +502,12 @@ class WGAN(object):
         
 if __name__ == "__main__":
     model = WGAN(lr = 0.0003, silent = False)
+    model.load(219)
     
-    while(True):
+    for i in range(1000):
+        model.evalTrunc(i)
+    
+    while(False):
         model.train()
 
 

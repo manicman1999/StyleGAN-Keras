@@ -7,10 +7,10 @@ from functools import partial
 from random import random
 
 #Config Stuff
-im_size = 256
+im_size = 512
 latent_size = 512
-BATCH_SIZE = 8
-directory = "Earth-256"
+BATCH_SIZE = 4
+directory = "Earth"
 n_images = 3405
 suff = 'jpg'
 
@@ -86,7 +86,7 @@ class dataGenerator(object):
 from keras.layers import Conv2D, Dense, AveragePooling2D, LeakyReLU, Activation
 from keras.layers import Reshape, UpSampling2D, Dropout, Flatten, Input, add, Cropping2D
 from keras.models import model_from_json, Model
-from keras.optimizers import Adam
+from keras.optimizers import RMSprop
 import keras.backend as K
 
 from AdaIN import AdaInstanceNormalization
@@ -160,6 +160,7 @@ class GAN(object):
         self.S = None
         
         self.DM = None
+        self.DMM = None
         self.AM = None
         self.MM = None
         
@@ -223,7 +224,7 @@ class GAN(object):
         inp_s = []
         ss = im_size
         while ss >= 4:
-            inp_s.append(Input([512]))
+            inp_s.append(Input(shape = [512]))
             ss = int(ss / 2)
         
         self.style_layers = len(inp_s)
@@ -238,9 +239,9 @@ class GAN(object):
         
         #Here do the actual generation stuff
         inp = Input(shape = [1])
-        x = Dense(4 * 4 * 512, kernel_initializer = 'he_normal')(inp)
-        x = Reshape([4, 4, 512])(x)
-        x = g_block(x, inp_s[0], noi[-1], 512, u=False)
+        x = Dense(4 * 4 * im_size, kernel_initializer = 'he_normal')(inp)
+        x = Reshape([4, 4, im_size])(x)
+        x = g_block(x, inp_s[0], noi[-1], im_size, u=False)
         
         if(im_size >= 1024):
             x = g_block(x, inp_s[-8], noi[7], 512) # Size / 64
@@ -271,8 +272,6 @@ class GAN(object):
         #Style FC, I only used 3 fully connected layers instead of 8 for faster training
         inp_s = Input(shape = [latent_size])
         sty = Dense(512, kernel_initializer = 'he_normal')(inp_s)
-        sty = LeakyReLU(0.1)(sty)
-        sty = Dense(512, kernel_initializer = 'he_normal')(sty)
         sty = LeakyReLU(0.1)(sty)
         sty = Dense(512, kernel_initializer = 'he_normal')(sty)
         sty = LeakyReLU(0.1)(sty)
@@ -310,7 +309,7 @@ class GAN(object):
         
         self.AM = Model(inputs = [gi, gi2, gi3], outputs = df)
             
-        self.AM.compile(optimizer = Adam(self.LR, beta_1 = 0, beta_2 = 0.99, decay = 0.00001), loss = 'mse')
+        self.AM.compile(optimizer = RMSprop(self.LR), loss = 'mse')
         
         return self.AM
     
@@ -345,11 +344,11 @@ class GAN(object):
         gf = self.G(ss + [gi2, gi3])
         df = self.D(gf)
         
-        self.AM = Model(inputs = inp_s + [gi2, gi3], outputs = df)
+        self.MM = Model(inputs = inp_s + [gi2, gi3], outputs = df)
             
-        self.AM.compile(optimizer = Adam(self.LR, beta_1 = 0, beta_2 = 0.99, decay = 0.00001), loss = 'mse')
+        self.MM.compile(optimizer = RMSprop(self.LR), loss = 'mse')
         
-        return self.AM
+        return self.MM
     
     def DisModel(self):
         
@@ -383,21 +382,70 @@ class GAN(object):
         # Samples for gradient penalty
         # For r1 use real samples (ri)
         # For r2 use fake samples (gf)
-        da = self.D(ri)
+        #da = self.D(ri)
         
         # Model With Inputs and Outputs
-        self.DM = Model(inputs=[ri, gi, gi2, gi3], outputs=[dr, df, da])
+        self.DM = Model(inputs=[ri, gi, gi2, gi3], outputs=[dr, df, dr])
         
         # Create partial of gradient penalty loss
         # For r1, averaged_samples = ri
         # For r2, averaged_samples = gf
         # Weight of 10 typically works
-        partial_gp_loss = partial(gradient_penalty_loss, averaged_samples = ri, weight = 5)
+        partial_gp_loss = partial(gradient_penalty_loss, averaged_samples = ri, weight = 15)
         
         #Compile With Corresponding Loss Functions
-        self.DM.compile(optimizer=Adam(self.LR, beta_1 = 0, beta_2 = 0.99, decay = 0.00001), loss=['mse', 'mse', partial_gp_loss])
+        self.DM.compile(optimizer=RMSprop(self.LR), loss=['mse', 'mse', partial_gp_loss])
         
         return self.DM
+    
+    def MixModelD(self):
+        
+        #D does update
+        self.D.trainable = True
+        for layer in self.D.layers:
+            layer.trainable = True
+        
+        #G does not update
+        self.G.trainable = False
+        for layer in self.G.layers:
+            layer.trainable = False
+        
+        #S does not update
+        self.S.trainable = False
+        for layer in self.S.layers:
+            layer.trainable = False
+        
+        #This model is simple sequential one with inputs and outputs
+        inp_s = []
+        ss = []
+        for _ in range(self.style_layers):
+            inp_s.append(Input([latent_size]))
+            ss.append(self.S(inp_s[-1]))
+            
+            
+        gi2 = Input(shape = [im_size, im_size, 1])
+        gi3 = Input(shape = [1])
+        
+        gf = self.G(ss + [gi2, gi3])
+        df = self.D(gf)
+        
+        ri = Input(shape = [im_size, im_size, 3])
+        dr = self.D(ri)
+        
+        self.DMM = Model(inputs = [ri] + inp_s + [gi2, gi3], outputs=[dr, df, dr])
+        
+        partial_gp_loss = partial(gradient_penalty_loss, averaged_samples = ri, weight = 15)
+            
+        self.DMM.compile(optimizer=RMSprop(self.LR), loss=['mse', 'mse', partial_gp_loss])
+        
+        return self.DMM
+    
+    def predict(self, inputs):
+        
+        for i in range(len(inputs) - 2):
+            inputs[i] = self.S.predict(inputs[i])
+            
+        return self.G.predict(inputs, batch_size = 4)
         
         
 
@@ -409,6 +457,7 @@ class WGAN(object):
         self.DisModel = self.GAN.DisModel()
         self.AdModel = self.GAN.AdModel()
         self.MixModel = self.GAN.MixModel()
+        self.MixModelD = self.GAN.MixModelD()
         self.generator = self.GAN.generator()
         
         if steps >= 0:
@@ -432,16 +481,26 @@ class WGAN(object):
         
         self.enoise = noise(8)
         self.enoiseImage = noiseImage(8)
+        
+        self.t = [[], []]
     
     def train(self):
         
         #Train Alternating
-        a = self.train_dis()
-        
+        t1 = time.clock()
         if self.GAN.steps % 10 <= 8:
+            a = self.train_dis()
+            t2 = time.clock()
             b = self.train_gen()
+            t3 = time.clock()
         else:
-            b = self.train_mix()
+            a = self.train_mix_d()
+            t2 = time.clock()
+            b = self.train_mix_g()
+            t3 = time.clock()
+            
+        self.t[0].append(t2-t1)
+        self.t[1].append(t3-t2)
         
         #Print info
         if self.GAN.steps % 20 == 0 and not self.silent:
@@ -452,22 +511,57 @@ class WGAN(object):
             print("T: " + str(s) + " sec")
             self.lastblip = time.clock()
             
+            if self.GAN.steps % 100 == 0:
+                print("TD: " + str(np.sum(self.t[0])))
+                print("TG: " + str(np.sum(self.t[1])))
+                
+                self.t = [[], []]
+                
+            
             #Save Model
             if self.GAN.steps % 500 == 0:
                 self.save(floor(self.GAN.steps / 10000))
             if self.GAN.steps % 1000 == 0:
                 self.evaluate(floor(self.GAN.steps / 1000))
+                self.evalMix(floor(self.GAN.steps / 1000))
+                self.evalTrunc(floor(self.GAN.steps / 1000))
             
         
         self.GAN.steps = self.GAN.steps + 1
           
     def train_dis(self):
         
-        #Get Data
+        #Get Data 
+        #self.im.get_batch(BATCH_SIZE)
+        #get_rand(self.im, BATCH_SIZE)
         train_data = [self.im.get_batch(BATCH_SIZE), noise(BATCH_SIZE), noiseImage(BATCH_SIZE), self.ones]
         
         #Train
         d_loss = self.DisModel.train_on_batch(train_data, [self.ones, self.nones, self.ones])
+        
+        return d_loss
+    
+    def train_mix_d(self):
+        
+        threshold = np.int32(np.random.uniform(0.0, self.GAN.style_layers, size = [BATCH_SIZE]))
+        n1 = noise(BATCH_SIZE)
+        n2 = noise(BATCH_SIZE)
+        
+        n = []
+        
+        for i in range(self.GAN.style_layers):
+            n.append([])
+            for j in range(BATCH_SIZE):
+                if i < threshold[j]:
+                    n[i].append(n1[j])
+                else:
+                    n[i].append(n2[j])
+            n[i] = np.array(n[i])
+        
+        images = self.im.get_batch(BATCH_SIZE)
+        
+        #Train
+        d_loss = self.MixModelD.train_on_batch([images] + n + [noiseImage(BATCH_SIZE), self.ones], [self.ones, self.nones, self.ones])
         
         return d_loss
        
@@ -478,7 +572,7 @@ class WGAN(object):
         
         return g_loss
     
-    def train_mix(self):
+    def train_mix_g(self):
         
         threshold = np.int32(np.random.uniform(0.0, self.GAN.style_layers, size = [BATCH_SIZE]))
         n1 = noise(BATCH_SIZE)
@@ -501,25 +595,90 @@ class WGAN(object):
         
         return g_loss
     
-    def evaluate(self, num = 0, trunc = 2.0): #8x4 images, bottom row is constant
+    def evaluate(self, num = 0): #8x8 images, bottom row is constant
         
-        n = noise(32)
-        n2 = noiseImage(32)
+        n = noise(56)
+        n2 = noiseImage(56)
         
-        im2 = self.generator.predict(([n] * self.GAN.style_layers) + [n2, np.ones([32, 1])])
-        im3 = self.generator.predict(([self.enoise] * self.GAN.style_layers) + [self.enoiseImage, np.ones([8, 1])])
+        im = self.GAN.predict(([n] * self.GAN.style_layers) + [n2, np.ones([56, 1])])
+        im3 = self.GAN.predict(([self.enoise] * self.GAN.style_layers) + [self.enoiseImage, np.ones([8, 1])])
         
-        r12 = np.concatenate(im2[:8], axis = 1)
-        r22 = np.concatenate(im2[8:16], axis = 1)
-        r32 = np.concatenate(im2[16:24], axis = 1)
-        r43 = np.concatenate(im3[:8], axis = 1)
+        r = []
+        r.append(np.concatenate(im[:8], axis = 1))
+        r.append(np.concatenate(im[8:16], axis = 1))
+        r.append(np.concatenate(im[16:24], axis = 1))
+        r.append(np.concatenate(im[24:32], axis = 1))
+        r.append(np.concatenate(im[32:40], axis = 1))
+        r.append(np.concatenate(im[40:48], axis = 1))
+        r.append(np.concatenate(im[48:56], axis = 1))
+        r.append(np.concatenate(im3[:8], axis = 1))
         
-        c1 = np.concatenate([r12, r22, r32, r43], axis = 0)
+        c1 = np.concatenate(r, axis = 0)
         
         x = Image.fromarray(np.uint8(c1*255))
         
         x.save("Results/i"+str(num)+".jpg")
         
+    
+    def evalMix(self, num = 0):
+        
+        bn = noise(8)
+        sn = noise(8)
+        
+        n = []
+        for i in range(self.GAN.style_layers):
+            n.append([])
+        
+        for i in range(8):
+            for j in range(8):
+                for l in range(0, int(self.GAN.style_layers/2)):
+                    n[l].append(bn[i])
+                for l in range(int(self.GAN.style_layers/2), self.GAN.style_layers):
+                    n[l].append(sn[j])
+        
+        for i in range(self.GAN.style_layers):
+            n[i] = np.array(n[i])
+            
+        
+        im = self.GAN.predict(n + [noiseImage(64), np.ones([64, 1])])
+        
+        r = []
+        r.append(np.concatenate(im[:8], axis = 1))
+        r.append(np.concatenate(im[8:16], axis = 1))
+        r.append(np.concatenate(im[16:24], axis = 1))
+        r.append(np.concatenate(im[24:32], axis = 1))
+        r.append(np.concatenate(im[32:40], axis = 1))
+        r.append(np.concatenate(im[40:48], axis = 1))
+        r.append(np.concatenate(im[48:56], axis = 1))
+        r.append(np.concatenate(im[56:], axis = 1))
+        c = np.concatenate(r, axis = 0)
+        
+        x = Image.fromarray(np.uint8(c*255))
+        
+        x.save("Results/m"+str(num)+".jpg")
+        
+    def evalTrunc(self, num = 0, trunc = 1.8):
+        
+        n = np.clip(noise(64), -trunc, trunc)
+        n2 = noiseImage(64)
+        
+        im = self.GAN.predict(([n] * self.GAN.style_layers) + [n2, np.ones([64, 1])])
+        
+        r = []
+        r.append(np.concatenate(im[:8], axis = 1))
+        r.append(np.concatenate(im[8:16], axis = 1))
+        r.append(np.concatenate(im[16:24], axis = 1))
+        r.append(np.concatenate(im[24:32], axis = 1))
+        r.append(np.concatenate(im[32:40], axis = 1))
+        r.append(np.concatenate(im[40:48], axis = 1))
+        r.append(np.concatenate(im[48:56], axis = 1))
+        r.append(np.concatenate(im[56:], axis = 1))
+        
+        c1 = np.concatenate(r, axis = 0)
+        
+        x = Image.fromarray(np.uint8(c1*255))
+        
+        x.save("Results/t"+str(num)+".jpg")
     
     def saveModel(self, model, name, num): #Save a Model
         json = model.to_json()
@@ -562,11 +721,12 @@ class WGAN(object):
         self.DisModel = self.GAN.DisModel()
         self.AdModel = self.GAN.AdModel()
         self.MixModel = self.GAN.MixModel()
+        self.MixModelD = self.GAN.MixModelD()
         
         
         
 if __name__ == "__main__":
-    model = WGAN(lr = 0.0003, silent = False)
+    model = WGAN(lr = 0.0002, silent = False)
     
     while(True):
         model.train()
