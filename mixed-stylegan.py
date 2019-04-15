@@ -7,12 +7,25 @@ from functools import partial
 from random import random
 
 #Config Stuff
-im_size = 512
+im_size = 128
 latent_size = 512
-BATCH_SIZE = 4
-directory = "Earth"
-n_images = 3405
-suff = 'jpg'
+BATCH_SIZE = 8
+directory = "Pokemon"
+n_images = 721
+suff = 'png'
+cmode = 'RGB'
+
+""" For testing color space ranges
+temp = Image.open("data/Earth/im (2).jpg").convert(cmode)
+temp1 = np.array(temp, dtype='float32')
+
+print(np.max(temp1[...,0]))
+print(np.min(temp1[...,0]))
+print(np.max(temp1[...,1]))
+print(np.min(temp1[...,1]))
+print(np.max(temp1[...,2]))
+print(np.min(temp1[...,2]))
+"""
 
 #Style Z
 def noise(n):
@@ -38,9 +51,9 @@ def import_images(loc, flip = True, suffix = 'png'):
     
     while(cont):
         try:
-            temp = Image.open("data/"+loc+"/im ("+str(i)+")."+suffix+"").convert('RGB')
+            temp = Image.open("data/"+loc+"/im ("+str(i)+")."+suffix+"").convert(cmode)
             temp = temp.resize((im_size, im_size), Image.BICUBIC)
-            temp1 = np.array(temp.convert('RGB'), dtype='float32') / 255
+            temp1 = np.array(temp, dtype='float32') / 255
             out.append(temp1)
             if flip:
                 out.append(np.flip(out[-1], 1))
@@ -69,8 +82,8 @@ class dataGenerator(object):
         out = []
         
         for i in idx:
-            temp = Image.open(self.loc+"/im ("+str(i)+")."+self.suffix+"").convert('RGB')
-            temp1 = np.array(temp.convert('RGB'), dtype='float32') / 255
+            temp = Image.open(self.loc+"/im ("+str(i)+")."+self.suffix+"").convert(cmode)
+            temp1 = np.array(temp, dtype='float32') / 255
             if self.flip and random() > 0.5:
                 temp1 = np.flip(temp1, 1)
                 
@@ -86,7 +99,8 @@ class dataGenerator(object):
 from keras.layers import Conv2D, Dense, AveragePooling2D, LeakyReLU, Activation
 from keras.layers import Reshape, UpSampling2D, Dropout, Flatten, Input, add, Cropping2D
 from keras.models import model_from_json, Model
-from keras.optimizers import RMSprop
+from keras.optimizers import Adam
+from adamlr import Adam_lr_mult
 import keras.backend as K
 
 from AdaIN import AdaInstanceNormalization
@@ -106,33 +120,33 @@ def gradient_penalty_loss(y_true, y_pred, averaged_samples, weight):
 #Upsample, Convolution, AdaIN, Noise, Activation, Convolution, AdaIN, Noise, Activation
 def g_block(inp, style, noise, fil, u = True):
     
-    b = Dense(fil)(style)
+    b = Dense(fil, kernel_initializer = 'he_normal', bias_initializer = 'ones')(style)
     b = Reshape([1, 1, fil])(b)
-    g = Dense(fil)(style)
+    g = Dense(fil, kernel_initializer = 'he_normal', bias_initializer = 'zeros')(style)
     g = Reshape([1, 1, fil])(g)
 
-    n = Conv2D(filters = fil, kernel_size = 1, padding = 'same', kernel_initializer = 'he_normal')(noise)
+    n = Conv2D(filters = fil, kernel_size = 1, padding = 'same', kernel_initializer = 'zeros', bias_initializer = 'zeros')(noise)
     
     if u:
         out = UpSampling2D(interpolation = 'bilinear')(inp)
-        out = Conv2D(filters = fil, kernel_size = 3, padding = 'same', kernel_initializer = 'he_normal')(out)
+        out = Conv2D(filters = fil, kernel_size = 3, padding = 'same', kernel_initializer = 'he_normal', bias_initializer = 'zeros')(out)
     else:
-        out = Activation('linear')(inp)
-    
-    out = AdaInstanceNormalization()([out, b, g])
+        out = Conv2D(filters = fil, kernel_size = 3, padding = 'same', kernel_initializer = 'he_normal', bias_initializer = 'zeros')(inp)
+
     out = add([out, n])
+    out = AdaInstanceNormalization()([out, b, g])
     out = LeakyReLU(0.01)(out)
     
-    b = Dense(fil)(style)
+    b = Dense(fil, kernel_initializer = 'he_normal', bias_initializer = 'ones')(style)
     b = Reshape([1, 1, fil])(b)
-    g = Dense(fil)(style)
+    g = Dense(fil, kernel_initializer = 'he_normal', bias_initializer = 'zeros')(style)
     g = Reshape([1, 1, fil])(g)
 
-    n = Conv2D(filters = fil, kernel_size = 1, padding = 'same', kernel_initializer = 'he_normal')(noise)
+    n = Conv2D(filters = fil, kernel_size = 1, padding = 'same', kernel_initializer = 'zeros', bias_initializer = 'zeros')(noise)
     
-    out = Conv2D(filters = fil, kernel_size = 3, padding = 'same', kernel_initializer = 'he_normal')(out)
-    out = AdaInstanceNormalization()([out, b, g])
+    out = Conv2D(filters = fil, kernel_size = 3, padding = 'same', kernel_initializer = 'he_normal', bias_initializer = 'zeros')(out)
     out = add([out, n])
+    out = AdaInstanceNormalization()([out, b, g])
     out = LeakyReLU(0.01)(out)
     
     return out
@@ -140,11 +154,11 @@ def g_block(inp, style, noise, fil, u = True):
 #Convolution, Activation, Pooling, Convolution, Activation
 def d_block(inp, fil, p = True):
     
-    route2 = Conv2D(filters = fil, kernel_size = 3, padding = 'same', kernel_initializer = 'he_normal')(inp)
+    route2 = Conv2D(filters = fil, kernel_size = 3, padding = 'same', kernel_initializer = 'he_normal', bias_initializer = 'zeros')(inp)
     route2 = LeakyReLU(0.01)(route2)
     if p:
         route2 = AveragePooling2D()(route2)
-    route2 = Conv2D(filters = fil, kernel_size = 3, padding = 'same', kernel_initializer = 'he_normal')(route2)
+    route2 = Conv2D(filters = fil, kernel_size = 3, padding = 'same', kernel_initializer = 'he_normal', bias_initializer = 'zeros')(route2)
     out = LeakyReLU(0.01)(route2)
     
     return out
@@ -152,7 +166,7 @@ def d_block(inp, fil, p = True):
 #This object holds the models
 class GAN(object):
     
-    def __init__(self, lr = 0.0001):
+    def __init__(self, steps = 1, lr = 0.0001, decay = 0.00001):
         
         #Models
         self.D = None
@@ -165,8 +179,10 @@ class GAN(object):
         self.MM = None
         
         #Config
-        self.LR = lr
-        self.steps = 1
+        #Automatic Decay
+        temp = (1 - decay) ** steps
+        self.LR = lr * temp
+        self.steps = steps
         
         #Calculate number of layers needed
         self.style_layers = 0
@@ -206,11 +222,11 @@ class GAN(object):
             
         x = Flatten()(x)
         
-        x = Dense(128)(x)
-        x = Activation('relu')(x)
+        x = Dense(128, kernel_initializer = 'he_normal', bias_initializer = 'zeros')(x)
+        x = LeakyReLU(0.01)(x)
         
         x = Dropout(0.6)(x)
-        x = Dense(1)(x)
+        x = Dense(1, kernel_initializer = 'he_normal', bias_initializer = 'zeros')(x)
         
         self.D = Model(inputs = inp, outputs = x)
         
@@ -239,7 +255,7 @@ class GAN(object):
         
         #Here do the actual generation stuff
         inp = Input(shape = [1])
-        x = Dense(4 * 4 * im_size, kernel_initializer = 'he_normal')(inp)
+        x = Dense(4 * 4 * im_size, kernel_initializer = 'ones', bias_initializer = 'zeros')(inp)
         x = Reshape([4, 4, im_size])(x)
         x = g_block(x, inp_s[0], noi[-1], im_size, u=False)
         
@@ -258,7 +274,7 @@ class GAN(object):
         x = g_block(x, inp_s[-2], noi[1], 32) # Size / 2
         x = g_block(x, inp_s[-1], noi[0], 16) # Size
         
-        x = Conv2D(filters = 3, kernel_size = 1, padding = 'same', activation = 'sigmoid')(x)
+        x = Conv2D(filters = 3, kernel_size = 1, padding = 'same', activation = 'sigmoid', bias_initializer = 'zeros')(x)
         
         self.G = Model(inputs = inp_s + [inp_n, inp], outputs = x)
         
@@ -269,13 +285,15 @@ class GAN(object):
         if self.S:
             return self.S
         
-        #Style FC, I only used 3 fully connected layers instead of 8 for faster training
+        #Mapping FC, I only used 5 fully connected layers instead of 8 for faster training
         inp_s = Input(shape = [latent_size])
-        sty = Dense(512, kernel_initializer = 'he_normal')(inp_s)
-        sty = LeakyReLU(0.1)(sty)
-        sty = Dense(512, kernel_initializer = 'he_normal')(sty)
-        sty = LeakyReLU(0.1)(sty)
-        sty = Dense(512, kernel_initializer = 'he_normal')(sty)
+        sty = Dense(512, kernel_initializer = 'he_normal', bias_initializer = 'zeros')(inp_s)
+        sty = LeakyReLU(0.01)(sty)
+        sty = Dense(512, kernel_initializer = 'he_normal', bias_initializer = 'zeros')(sty)
+        sty = LeakyReLU(0.01)(sty)
+        sty = Dense(512, kernel_initializer = 'he_normal', bias_initializer = 'zeros')(sty)
+        sty = LeakyReLU(0.01)(sty)
+        sty = Dense(512, kernel_initializer = 'he_normal', bias_initializer = 'zeros')(sty)
         
         self.S = Model(inputs = inp_s, outputs = sty)
         
@@ -309,7 +327,10 @@ class GAN(object):
         
         self.AM = Model(inputs = [gi, gi2, gi3], outputs = df)
             
-        self.AM.compile(optimizer = RMSprop(self.LR), loss = 'mse')
+        learning_rate_multipliers = {}
+        learning_rate_multipliers['model_3'] = 0.1
+            
+        self.AM.compile(optimizer = Adam_lr_mult(self.LR, beta_1 = 0, beta_2 = 0.99, decay = 0.00001, multipliers = learning_rate_multipliers), loss = 'mse')
         
         return self.AM
     
@@ -345,8 +366,11 @@ class GAN(object):
         df = self.D(gf)
         
         self.MM = Model(inputs = inp_s + [gi2, gi3], outputs = df)
+
+        learning_rate_multipliers = {}
+        learning_rate_multipliers['model_3'] = 0.1
             
-        self.MM.compile(optimizer = RMSprop(self.LR), loss = 'mse')
+        self.MM.compile(optimizer = Adam_lr_mult(self.LR, beta_1 = 0, beta_2 = 0.99, decay = 0.00001, multipliers = learning_rate_multipliers), loss = 'mse')
         
         return self.MM
     
@@ -391,10 +415,10 @@ class GAN(object):
         # For r1, averaged_samples = ri
         # For r2, averaged_samples = gf
         # Weight of 10 typically works
-        partial_gp_loss = partial(gradient_penalty_loss, averaged_samples = ri, weight = 15)
+        partial_gp_loss = partial(gradient_penalty_loss, averaged_samples = ri, weight = 50)
         
         #Compile With Corresponding Loss Functions
-        self.DM.compile(optimizer=RMSprop(self.LR), loss=['mse', 'mse', partial_gp_loss])
+        self.DM.compile(optimizer=Adam(self.LR, beta_1 = 0, beta_2 = 0.99, decay = 0.00001), loss=['mse', 'mse', partial_gp_loss])
         
         return self.DM
     
@@ -434,9 +458,9 @@ class GAN(object):
         
         self.DMM = Model(inputs = [ri] + inp_s + [gi2, gi3], outputs=[dr, df, dr])
         
-        partial_gp_loss = partial(gradient_penalty_loss, averaged_samples = ri, weight = 15)
+        partial_gp_loss = partial(gradient_penalty_loss, averaged_samples = ri, weight = 50)
             
-        self.DMM.compile(optimizer=RMSprop(self.LR), loss=['mse', 'mse', partial_gp_loss])
+        self.DMM.compile(optimizer=Adam(self.LR, beta_1 = 0, beta_2 = 0.99, decay = 0.00001), loss=['mse', 'mse', partial_gp_loss])
         
         return self.DMM
     
@@ -448,20 +472,17 @@ class GAN(object):
         return self.G.predict(inputs, batch_size = 4)
         
         
-
+from keras.datasets import cifar10
 class WGAN(object):
     
-    def __init__(self, steps = -1, lr = 0.0001, silent = True):
+    def __init__(self, steps = 1, lr = 0.0001, decay = 0.00001, silent = True):
         
-        self.GAN = GAN(lr = lr)
+        self.GAN = GAN(steps = steps, lr = lr, decay = decay)
         self.DisModel = self.GAN.DisModel()
         self.AdModel = self.GAN.AdModel()
         self.MixModel = self.GAN.MixModel()
         self.MixModelD = self.GAN.MixModelD()
         self.generator = self.GAN.generator()
-        
-        if steps >= 0:
-            self.GAN.steps = steps
         
         self.lastblip = time.clock()
         
@@ -488,7 +509,7 @@ class WGAN(object):
         
         #Train Alternating
         t1 = time.clock()
-        if self.GAN.steps % 10 <= 8:
+        if self.GAN.steps % 10 <= 5:
             a = self.train_dis()
             t2 = time.clock()
             b = self.train_gen()
@@ -568,7 +589,7 @@ class WGAN(object):
     def train_gen(self):
         
         #Train
-        g_loss = self.AdModel.train_on_batch([noise(BATCH_SIZE), noiseImage(BATCH_SIZE), self.ones], self.zeros)
+        g_loss = self.AdModel.train_on_batch([noise(BATCH_SIZE), noiseImage(BATCH_SIZE), self.ones], self.ones)
         
         return g_loss
     
@@ -591,7 +612,7 @@ class WGAN(object):
                     
         
         #Train
-        g_loss = self.MixModel.train_on_batch(n + [noiseImage(BATCH_SIZE), self.ones], self.zeros)
+        g_loss = self.MixModel.train_on_batch(n + [noiseImage(BATCH_SIZE), self.ones], self.ones)
         
         return g_loss
     
@@ -615,9 +636,9 @@ class WGAN(object):
         
         c1 = np.concatenate(r, axis = 0)
         
-        x = Image.fromarray(np.uint8(c1*255))
+        x = Image.fromarray(np.uint8(c1*255), mode = cmode)
         
-        x.save("Results/i"+str(num)+".jpg")
+        x.save("Results/i"+str(num)+"ii.jpg")
         
     
     def evalMix(self, num = 0):
@@ -653,32 +674,28 @@ class WGAN(object):
         r.append(np.concatenate(im[56:], axis = 1))
         c = np.concatenate(r, axis = 0)
         
-        x = Image.fromarray(np.uint8(c*255))
+        x = Image.fromarray(np.uint8(c*255), mode = cmode)
         
-        x.save("Results/m"+str(num)+".jpg")
+        x.save("Results/i"+str(num)+"mm.jpg")
         
     def evalTrunc(self, num = 0, trunc = 1.8):
         
-        n = np.clip(noise(64), -trunc, trunc)
-        n2 = noiseImage(64)
+        n = np.clip(noise(16), -trunc, trunc)
+        n2 = noiseImage(16)
         
         im = self.GAN.predict(([n] * self.GAN.style_layers) + [n2, np.ones([64, 1])])
         
         r = []
-        r.append(np.concatenate(im[:8], axis = 1))
-        r.append(np.concatenate(im[8:16], axis = 1))
-        r.append(np.concatenate(im[16:24], axis = 1))
-        r.append(np.concatenate(im[24:32], axis = 1))
-        r.append(np.concatenate(im[32:40], axis = 1))
-        r.append(np.concatenate(im[40:48], axis = 1))
-        r.append(np.concatenate(im[48:56], axis = 1))
-        r.append(np.concatenate(im[56:], axis = 1))
+        r.append(np.concatenate(im[:4], axis = 1))
+        r.append(np.concatenate(im[4:8], axis = 1))
+        r.append(np.concatenate(im[8:12], axis = 1))
+        r.append(np.concatenate(im[12:], axis = 1))
         
         c1 = np.concatenate(r, axis = 0)
         
-        x = Image.fromarray(np.uint8(c1*255))
+        x = Image.fromarray(np.uint8(c1*255), mode = cmode)
         
-        x.save("Results/t"+str(num)+".jpg")
+        x.save("Results/i"+str(num)+"tt.jpg")
     
     def saveModel(self, model, name, num): #Save a Model
         json = model.to_json()
@@ -726,7 +743,7 @@ class WGAN(object):
         
         
 if __name__ == "__main__":
-    model = WGAN(lr = 0.0002, silent = False)
+    model = WGAN(lr = 0.0001, silent = False)
     
     while(True):
         model.train()
