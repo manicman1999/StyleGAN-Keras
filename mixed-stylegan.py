@@ -7,13 +7,13 @@ from functools import partial
 from random import random
 
 #Config Stuff
-im_size = 128
+im_size = 256
 latent_size = 512
-BATCH_SIZE = 8
-directory = "Pokemon"
-n_images = 721
-suff = 'png'
-cmode = 'RGB'
+BATCH_SIZE = 4
+directory = "Rooms"
+n_images = 2686
+suff = 'jpg'
+cmode = 'YCbCr'
 
 """ For testing color space ranges
 temp = Image.open("data/Earth/im (2).jpg").convert(cmode)
@@ -225,7 +225,7 @@ class GAN(object):
         x = Dense(128, kernel_initializer = 'he_normal', bias_initializer = 'zeros')(x)
         x = LeakyReLU(0.01)(x)
         
-        x = Dropout(0.6)(x)
+        x = Dropout(0.2)(x)
         x = Dense(1, kernel_initializer = 'he_normal', bias_initializer = 'zeros')(x)
         
         self.D = Model(inputs = inp, outputs = x)
@@ -678,18 +678,33 @@ class WGAN(object):
         
         x.save("Results/i"+str(num)+"mm.jpg")
         
-    def evalTrunc(self, num = 0, trunc = 1.8):
+    def evalTrunc(self, num = 0, trunc = 2.0, scale = 1, nscale = 0.8, custom_noise = np.array([0])):
         
-        n = np.clip(noise(16), -trunc, trunc)
-        n2 = noiseImage(16)
+        ss = self.GAN.S.predict(noise(2048), batch_size = 128)
+        mean = np.mean(ss, axis = 0)
+        std = np.std(ss, axis = 0)
         
-        im = self.GAN.predict(([n] * self.GAN.style_layers) + [n2, np.ones([64, 1])])
+        if custom_noise.shape[0] != 16:
+            noi = noise(16)
+        else:
+            noi = custom_noise
+        
+        n = self.GAN.S.predict(noi)
+        n2 = noiseImage(16) * nscale
+        
+        for i in range(n.shape[0]):
+            n[i] = np.clip(n[i], mean - (std*trunc), mean + (std * trunc))
+            
+            if scale != 1:
+                n[i] = (n[i] - mean) * scale + mean
+        
+        im = self.GAN.G.predict(([n] * self.GAN.style_layers) + [n2, np.ones([16, 1])])
         
         r = []
         r.append(np.concatenate(im[:4], axis = 1))
         r.append(np.concatenate(im[4:8], axis = 1))
         r.append(np.concatenate(im[8:12], axis = 1))
-        r.append(np.concatenate(im[12:], axis = 1))
+        r.append(np.concatenate(im[12:16], axis = 1))
         
         c1 = np.concatenate(r, axis = 0)
         
